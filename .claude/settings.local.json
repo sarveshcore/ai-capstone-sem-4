@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(mv:*)",
+      "Bash(python:*)",
+      "Bash(pip3 list:*)",
+      "Bash(rm:*)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "Bash(pip3 install:*)",
+      "Bash(streamlit:*)",
+      "mcp__plugin_playwright_playwright__browser_wait_for",
+      "mcp__plugin_playwright_playwright__browser_resize",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "mcp__plugin_playwright_playwright__browser_run_code",
+      "mcp__plugin_playwright_playwright__browser_click"
+    ]
+  }
+}
