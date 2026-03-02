@@ -1,11 +1,9 @@
-# ABOUTME: Trains the credit risk model using SMOTE oversampling and GridSearchCV.
+# ABOUTME: Trains the credit risk model using  GridSearchCV.
 # ABOUTME: Provides train_model() which returns the best fitted pipeline and its evaluation metrics.
 
-import numpy as np
 import pandas as pd
-from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
-from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
 from sklearn.model_selection import GridSearchCV
 
@@ -14,18 +12,25 @@ from src.preprocess import build_preprocessor
 
 PARAM_GRID = {
     'classifier__n_estimators': [100, 200],
-    'classifier__max_depth': [10, 20, None],
-    'classifier__min_samples_split': [2, 5],
-    'classifier__class_weight': ['balanced', 'balanced_subsample'],
+    'classifier__max_depth': [3, 6, 10],
+    'classifier__learning_rate': [0.01, 0.1],
+    'classifier__min_child_weight': [1, 5],
+    'classifier__subsample': [0.8, 1.0],
+    'classifier__colsample_bytree': [0.8, 1.0]
 }
 
 
 def train_model(X_train: pd.DataFrame, y_train: pd.Series, cv: int = 5):
-    """Fit a SMOTE + RandomForest pipeline via GridSearchCV. Returns the best estimator."""
+    """Fit a XGBoost pipeline via GridSearchCV. Returns the best estimator."""
     pipeline = ImbPipeline(steps=[
         ('preprocessor', build_preprocessor()),
-        ('smote', SMOTE(random_state=42)),
-        ('classifier', RandomForestClassifier(random_state=42)),
+        ('classifier', XGBClassifier(
+            n_estimators=500,
+            learning_rate=0.1,
+            max_depth=6,
+            random_state=42,
+            eval_metric="logloss",
+        )),
     ])
 
     print("Running GridSearchCV (this may take a few minutes)...")
