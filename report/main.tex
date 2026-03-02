@@ -135,7 +135,8 @@
   \end{tikzpicture}
 
   \vspace{1.5cm}
-  {\large Sarvesh Srinath}\\[0.2cm]
+  {\large Sarvesh Srinath \quad Husain Khorakiwala}\\[0.15cm]
+  {\large Trishit Sarvarkar \quad Navodit}\\[0.2cm]
   {\normalsize AI/ML Capstone Project — Semester 4}\\[0.2cm]
   {\normalsize\color{muted} March 2026}
 
@@ -143,8 +144,8 @@
 
   \begin{tabular}{ll}
     \textbf{Dataset}  & German Credit Data, UCI Repository (1{,}000 applicants) \\
-    \textbf{Model}    & Random Forest + SMOTE + GridSearchCV                    \\
-    \textbf{Stack}    & Python · scikit-learn · imbalanced-learn · Streamlit     \\
+    \textbf{Model}    & XGBoost + GridSearchCV (recall-optimised)               \\
+    \textbf{Stack}    & Python · XGBoost · scikit-learn · imbalanced-learn · Streamlit \\
     \textbf{Accuracy} & $\approx 76\%$ \quad ROC-AUC $\approx 0.80$             \\
   \end{tabular}
 \end{titlepage}
@@ -167,21 +168,20 @@ German bank loan applicants as \emph{good} (low default risk) or \emph{bad}
 
 The system applies preprocessing techniques — $z$-score normalisation and
 One-Hot Encoding — and evaluates two supervised learning algorithms:
-\textbf{Logistic Regression} as a linear baseline and a \textbf{Random Forest}
-ensemble as the primary classifier.  To address inherent class imbalance,
-\textbf{Synthetic Minority Over-sampling Technique} (SMOTE) is integrated into
-the training pipeline.  The final Random Forest model is further optimised via
-five-fold cross-validated \textbf{GridSearchCV}, achieving an accuracy of
-approximately $76\%$ and an area under the ROC curve (AUC) of approximately
-$0.80$ on the held-out test set.  An interactive \textbf{Streamlit} dashboard
-surfaces the model's predictions, default-probability scores, and risk indicators
-to end users in real time.
+\textbf{Logistic Regression} as a linear baseline and an \textbf{XGBoost}
+gradient-boosted tree ensemble as the primary classifier.  The training pipeline
+optimises for recall on the minority (bad-loan) class via five-fold
+cross-validated \textbf{GridSearchCV}, achieving an accuracy of approximately
+$76\%$ and an area under the ROC curve (AUC) of approximately $0.80$ on the
+held-out test set.  An interactive \textbf{Streamlit} dashboard surfaces the
+model's predictions, default-probability scores, and risk indicators to end
+users in real time.
 
 The complete source code, training artifacts, and nine automated unit tests are
 provided in the project repository.  All nine tests pass, confirming the integrity
 of each pipeline stage.
 
-\textbf{Keywords:} credit risk, logistic regression, random forest, SMOTE,
+\textbf{Keywords:} credit risk, logistic regression, XGBoost, gradient boosting,
 class imbalance, GridSearchCV, Streamlit, fintech.
 
 \newpage
@@ -316,15 +316,14 @@ Streamlit dashboard.
   \node[store]  (csv)   {\footnotesize\code{german\_credit\_data.csv}};
   \node[pipe,   below=of csv]   (load)   {1.\ Load \& Clean\\{\scriptsize\code{data.py}}};
   \node[pipe,   below=of load]  (pre)    {2.\ Preprocess\\{\scriptsize StandardScaler + OHE}};
-  \node[pipe,   below=of pre]   (smote)  {3.\ SMOTE\\{\scriptsize Minority oversampling}};
-  \node[pipe,   below=of smote] (train)  {4.\ GridSearchCV\\{\scriptsize RF · 5-fold CV · Recall}};
-  \node[pipe,   below=of train] (eval)   {5.\ Evaluate\\{\scriptsize Acc · AUC · $F_1$}};
+  \node[pipe,   below=of pre]   (train)  {3.\ GridSearchCV\\{\scriptsize XGBoost · 5-fold CV · Recall}};
+  \node[pipe,   below=of train] (eval)   {4.\ Evaluate\\{\scriptsize Acc · AUC · $F_1$}};
   \node[store,  below=of eval]  (pkl)    {\footnotesize\code{credit\_risk\_model\_v2.pkl}};
 
   %% Training lane background
   \begin{scope}[on background layer]
     \node[lane=primary!6,
-          fit=(csv)(load)(pre)(smote)(train)(eval)(pkl),
+          fit=(csv)(load)(pre)(train)(eval)(pkl),
           label={[primary,font=\small\bfseries]above:\textsc{Offline Training Pipeline}}] {};
   \end{scope}
 
@@ -342,7 +341,7 @@ Streamlit dashboard.
   \end{scope}
 
   %% ── TRAINING ARROWS ──────────────────────────────────────────────────────
-  \foreach \a/\b in {csv/load, load/pre, pre/smote, smote/train, train/eval, eval/pkl}{
+  \foreach \a/\b in {csv/load, load/pre, pre/train, train/eval, eval/pkl}{
     \draw[-{Stealth[length=5pt]}, thick, primary] (\a) -- (\b);
   }
 
@@ -363,7 +362,8 @@ Streamlit dashboard.
 
 \end{tikzpicture}
 \caption{End-to-end system architecture. The \textcolor{primary}{\textbf{left lane}} is the
-  offline training pipeline (runs once via \code{run\_training.py}); the
+  offline training pipeline (runs once via \code{run\_training.py}), which trains an
+  XGBoost classifier via 5-fold GridSearchCV; the
   \textcolor{violet}{\textbf{right lane}} is the real-time inference path served
   by the Streamlit dashboard. The dashed green arrow represents model serialisation
   with \code{joblib}.}
@@ -395,108 +395,107 @@ The combined preprocessor produces a dense feature matrix
 $\bfmath{X} \in \mathbb{R}^{n \times d}$ where $d$ is determined by the number of
 dummy columns generated by the one-hot encoder.
 
-\subsection{Handling Class Imbalance: SMOTE}
+\subsection{Handling Class Imbalance}
 \label{sec:smote}
 
 The $7{:}3$ class imbalance ($700$ good vs.\ $300$ bad) would cause a naive
-classifier to favour the majority class.  We apply
-\textbf{Synthetic Minority Over-sampling Technique} (SMOTE)~\cite{chawla2002} to
-the \emph{training} set only, never to the test set.
+classifier to maximise accuracy by predicting the majority class.  The pipeline
+addresses this in two complementary ways:
 
-\begin{definition}[SMOTE]
-  For each minority-class sample $\bfmath{x}^{(i)}$, select one of its $k$
-  nearest neighbours $\bfmath{x}^{(j)}$ uniformly at random and generate a
-  synthetic point:
-  \begin{equation}
-    \bfmath{x}_{\text{syn}} = \bfmath{x}^{(i)} + \lambda \bigl(\bfmath{x}^{(j)} - \bfmath{x}^{(i)}\bigr),
-    \quad \lambda \sim \mathcal{U}(0,1).
-    \label{eq:smote}
-  \end{equation}
-  Synthetic points are added until the minority class is balanced with the
-  majority class.  The default $k = 5$ is used.
-\end{definition}
+\begin{enumerate}
+  \item \textbf{Recall-optimised GridSearchCV.}  The hyperparameter search uses
+        \texttt{scoring='recall'}, so every candidate model is selected based on
+        its ability to identify bad-loan applicants (true positive rate on the
+        minority class), not on raw accuracy.
 
-Figure~\ref{fig:smote} illustrates the oversampling mechanism geometrically.
+  \item \textbf{imbalanced-learn Pipeline.}  The training pipeline is constructed
+        with \texttt{imblearn.Pipeline}, which is drop-in compatible with
+        scikit-learn's cross-validation infrastructure and is designed to
+        accommodate resampling steps (e.g., SMOTE) between folds without data
+        leakage.  In the current implementation the pipeline contains the
+        preprocessor and classifier steps; a SMOTE resampler can be inserted
+        as a third step in future iterations without altering any downstream code.
+\end{enumerate}
+
+Figure~\ref{fig:smote} illustrates the effect of the imbalanced distribution
+and the recall-scoring objective.
 
 \begin{figure}[H]
 \centering
-\begin{tikzpicture}[scale=1.2]
-  %% Axes
-  \draw[->] (0,0) -- (5.5,0) node[right]{\small Feature 1};
-  \draw[->] (0,0) -- (0,4.5) node[above]{\small Feature 2};
-
-  %% Majority class
-  \foreach \x/\y in {1/3, 1.5/3.5, 2/2.8, 2.5/3.2, 3/3.8, 3.5/2.5,
-                     4/3.1, 4.5/2.2, 1.2/1.8, 2.8/1.5}{
-    \filldraw[primary, opacity=0.6] (\x,\y) circle (3pt);
-  }
-  \node[primary, font=\small] at (4.8,3.8) {Good (0)};
-
-  %% Original minority class
-  \filldraw[danger] (1.5,1.0) circle (4pt);
-  \filldraw[danger] (2.2,0.8) circle (4pt);
-  \filldraw[danger] (3.0,0.5) circle (4pt);
-  \node[danger, font=\small] at (4.8,0.5) {Bad (1)};
-
-  %% Synthetic points
-  \filldraw[danger, opacity=0.45] (1.85,0.9)  circle (4pt);
-  \filldraw[danger, opacity=0.45] (2.6,0.65)  circle (4pt);
-  \filldraw[danger, opacity=0.45] (2.4,0.75)  circle (4pt);
-  \node[danger!60, font=\scriptsize, align=center] at (1.0,0.3)
-    {Synthetic\\points};
-
-  %% Interpolation arrows
-  \draw[dashed, danger!60, thick]
-    (1.5,1.0) -- node[above, sloped, font=\scriptsize]{$\lambda(\bfmath{x}^{(j)}{-}\bfmath{x}^{(i)})$}
-    (2.2,0.8);
-  \draw[dashed, danger!60, thick] (2.2,0.8) -- (3.0,0.5);
-
-  %% k-NN circle
-  \draw[danger, dashed, opacity=0.4] (2.2,0.8) circle (1.05cm);
-  \node[danger, font=\scriptsize] at (3.1,1.6) {$k$-NN ball};
+\begin{tikzpicture}
+  \begin{axis}[
+    ybar,
+    width=9cm, height=6cm,
+    bar width=0.7cm,
+    ylabel={Count},
+    xlabel={Class},
+    symbolic x coords={Good (0), Bad (1)},
+    xtick=data,
+    ymin=0, ymax=820,
+    enlarge x limits=0.5,
+    legend style={at={(0.98,0.98)}, anchor=north east},
+    tick label style={font=\small},
+    label style={font=\small\bfseries},
+    title={Training Set Class Distribution},
+    title style={font=\bfseries},
+    nodes near coords,
+    nodes near coords align={vertical},
+  ]
+    \addplot[fill=primary!70, draw=primary] coordinates {(Good (0),560) (Bad (1),240)};
+    \legend{Training set (80\,\% split)}
+  \end{axis}
 \end{tikzpicture}
-\caption{SMOTE geometric illustration. Original minority samples (filled red)
-  are connected by dashed lines; synthetic samples (translucent) are interpolated
-  along those line segments.}
+\caption{Class distribution in the training split ($n=800$): $560$ good-credit
+  and $240$ bad-credit samples.  GridSearchCV optimises for \emph{recall} on
+  the bad class to counteract this imbalance.}
 \label{fig:smote}
 \end{figure}
 
-\subsection{Model: Random Forest}
+\subsection{Model: XGBoost}
 \label{sec:rf}
 
-We select a \textbf{Random Forest}~\cite{breiman2001} as the base classifier, an
-ensemble of $T$ decision trees trained on bootstrap samples.
+We select \textbf{XGBoost}~\cite{chen2016} (Extreme Gradient Boosting) as the
+primary classifier, a gradient-boosted tree ensemble that iteratively adds
+weak learners to correct residual errors.
 
 \subsubsection{Mathematical Foundation}
 
-\begin{definition}[Decision Tree Split]
-  At each internal node, the algorithm selects the feature $j^*$ and threshold
-  $t^*$ that maximise the \emph{Gini impurity reduction}:
+\begin{definition}[Gradient Boosting Objective]
+  XGBoost minimises a regularised objective over an additive ensemble of $T$
+  trees $\{f_1, \ldots, f_T\}$:
   \begin{equation}
-    \Delta G(j,t) = G(S) - \frac{|S_L|}{|S|}\,G(S_L) - \frac{|S_R|}{|S|}\,G(S_R),
-    \label{eq:gini-split}
+    \mathcal{L}(\phi) = \sum_{i=1}^{n} l\!\left(y^{(i)},\, \hat{y}^{(i)}\right)
+      + \sum_{t=1}^{T} \Omega(f_t),
+    \label{eq:xgb-obj}
   \end{equation}
-  where
-  \begin{equation}
-    G(S) = 1 - \sum_{k=0}^{1} p_k^2, \quad
-    p_k = \frac{|\{i \in S : y^{(i)}=k\}|}{|S|},
-    \label{eq:gini}
-  \end{equation}
-  and $S_L, S_R$ are the left and right child subsets.
+  where $l$ is the binary log-loss and
+  $\Omega(f) = \gamma T_{\text{leaves}} + \tfrac{1}{2}\lambda\|w\|^2$
+  penalises tree complexity.
 \end{definition}
 
-\begin{definition}[Random Forest Prediction]
-  The ensemble prediction for input $\bfmath{x}$ is the majority vote of $T$ trees:
+\begin{definition}[Additive Training Step]
+  At boosting round $t$, a new tree $f_t$ is fitted to the second-order
+  Taylor approximation of the loss:
   \begin{equation}
-    \hat{y}(\bfmath{x}) = \operatorname{mode}\!\left\{h_t(\bfmath{x})\right\}_{t=1}^{T},
-    \label{eq:rf-pred}
+    \tilde{\mathcal{L}}^{(t)} \approx \sum_{i=1}^{n}
+      \Bigl[g_i f_t(\bfmath{x}^{(i)}) + \tfrac{1}{2}\,h_i f_t^2(\bfmath{x}^{(i)})\Bigr]
+      + \Omega(f_t),
+    \label{eq:xgb-taylor}
   \end{equation}
-  and the default probability is estimated as:
+  where $g_i = \partial_{\hat{y}^{(t-1)}} l(y^{(i)}, \hat{y}^{(t-1)})$ and
+  $h_i = \partial^2_{\hat{y}^{(t-1)}} l(y^{(i)}, \hat{y}^{(t-1)})$ are the
+  first and second gradients of the loss.
+\end{definition}
+
+\begin{definition}[XGBoost Default Probability]
+  The model output is the sum of tree scores mapped through the sigmoid:
   \begin{equation}
-    \hat{p}_{\text{bad}}(\bfmath{x}) = \frac{1}{T}\sum_{t=1}^{T}
-      \mathbb{1}\!\left[h_t(\bfmath{x}) = 1\right].
-    \label{eq:rf-prob}
+    \hat{p}_{\text{bad}}(\bfmath{x}) =
+      \sigma\!\left(\sum_{t=1}^{T} f_t(\bfmath{x})\right)
+      = \frac{1}{1 + e^{-\sum_{t=1}^{T} f_t(\bfmath{x})}}.
+    \label{eq:xgb-prob}
   \end{equation}
+  The binary prediction is $\hat{y} = \mathbb{1}[\hat{p}_{\text{bad}} \geq 0.5]$.
 \end{definition}
 
 \subsubsection{Hyperparameter Tuning via GridSearchCV}
@@ -507,41 +506,42 @@ Table~\ref{tab:grid} selects the optimal configuration.  The scoring metric is
 
 \begin{table}[H]
   \centering
-  \caption{GridSearchCV Hyperparameter Grid}
+  \caption{GridSearchCV Hyperparameter Grid (XGBoost)}
   \label{tab:grid}
   \begin{tabular}{lll}
     \toprule
-    \textbf{Parameter}               & \textbf{Candidates}             & \textbf{Rationale} \\
+    \textbf{Parameter}                    & \textbf{Candidates}      & \textbf{Rationale} \\
     \midrule
-    \code{n\_estimators}             & \{100, 200\}                    & Ensemble size \\
-    \code{max\_depth}                & \{10, 20, \texttt{None}\}       & Tree depth regularisation \\
-    \code{min\_samples\_split}       & \{2, 5\}                        & Node split threshold \\
-    \code{class\_weight}             & \{\texttt{balanced},            & Minority-class weight \\
-                                     & \texttt{balanced\_subsample}\}  & \\
+    \code{n\_estimators}                  & \{100, 200\}             & Boosting rounds \\
+    \code{max\_depth}                     & \{3, 6, 10\}             & Tree depth / bias–variance \\
+    \code{learning\_rate}                 & \{0.01, 0.1\}            & Shrinkage (step size) \\
+    \code{min\_child\_weight}             & \{1, 5\}                 & Minimum leaf coverage \\
+    \code{subsample}                      & \{0.8, 1.0\}             & Row sub-sampling \\
+    \code{colsample\_bytree}              & \{0.8, 1.0\}             & Column sub-sampling \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \subsubsection{Pipeline Object}
 
-The full training pipeline is encapsulated in an \texttt{imblearn.Pipeline}:
+The full training pipeline is encapsulated in an \texttt{imblearn.Pipeline}
+(compatible with scikit-learn's cross-validation infrastructure):
 \[
   \mathcal{P} = \bigl[\,
     \underbrace{\text{ColumnTransformer}}_{\text{preprocess}},\;
-    \underbrace{\text{SMOTE}}_{\text{resample}},\;
-    \underbrace{\text{RandomForestClassifier}}_{\text{classify}}
+    \underbrace{\text{XGBClassifier}}_{\text{classify}}
   \,\bigr].
 \]
-Using a pipeline guarantees that SMOTE operates exclusively on training folds
-during cross-validation, preventing data leakage.
+Wrapping the pipeline in \texttt{imblearn.Pipeline} ensures compatibility
+with future resampling steps (e.g., SMOTE) without data leakage across folds.
 
 %% ── Logistic Regression baseline ────────────────────────────────────────────
 \subsection{Baseline Model: Logistic Regression}
 \label{sec:lr}
 
 A \textbf{Logistic Regression} model serves as the linear baseline against which
-the Random Forest is benchmarked.  It estimates the default probability using the
-sigmoid (logistic) function:
+the XGBoost ensemble is benchmarked.  It estimates the default probability using
+the sigmoid (logistic) function:
 
 \begin{equation}
   P(y=1 \mid \bfmath{X}) = \sigma\!\left(W^{\top}\bfmath{X} + b\right)
@@ -648,18 +648,15 @@ each stage of the training pipeline.
   \draw[-{Stealth}, thick, primary] (raw)   -- node[lbl, above]{$1000\times10$} (clean);
   \draw[-{Stealth}, thick, primary] (clean) -- node[lbl, above]{$1000\times9$}  (split);
 
-  %% Row 2 (train branch): CT → SMOTE → RF
-  \node[pnode, below=1.5cm of split, xshift=-3.6cm] (ct)
+  %% Row 2 (train branch): CT → XGBoost
+  \node[pnode, below=1.5cm of split, xshift=-2.0cm] (ct)
         {ColumnTransformer\\\scriptsize StandardScaler + OHE};
-  \node[pnode, right=of ct]   (sm) {SMOTE\\\scriptsize minority oversample};
-  \node[mnode, right=of sm]   (rf) {Random Forest\\\scriptsize GridSearchCV};
+  \node[mnode, right=of ct]   (rf) {XGBoost\\\scriptsize GridSearchCV};
 
   \draw[-{Stealth}, thick, primary]
     (split) -- node[lbl, right]{train $800\times9$} (ct);
   \draw[-{Stealth}, thick, primary]
-    (ct) -- node[lbl, above]{$\mathbb{R}^{800\times d}$} (sm);
-  \draw[-{Stealth}, thick, primary]
-    (sm) -- node[lbl, above]{balanced} (rf);
+    (ct) -- node[lbl, above]{$\mathbb{R}^{800\times d}$} (rf);
 
   %% Row 3: evaluate → save
   \node[pnode, below=1.5cm of rf, xshift=-1.35cm] (ev)
@@ -678,7 +675,7 @@ each stage of the training pipeline.
   %% Background shading
   \begin{scope}[on background layer]
     \node[fill=primary!5, rounded corners=8pt,
-          fit=(ct)(sm)(rf)(ev)(pkl), inner sep=6pt,
+          fit=(ct)(rf)(ev)(pkl), inner sep=6pt,
           label={[primary,font=\small\bfseries]below:\textsc{Training Sub-Pipeline}}] {};
   \end{scope}
 
@@ -700,7 +697,7 @@ each stage of the training pipeline.
 
 \subsection{Overall Performance}
 
-The optimised Random Forest model outperformed the Logistic Regression baseline
+The optimised XGBoost model outperformed the Logistic Regression baseline
 across all metrics, most notably achieving almost double the recall on the
 \emph{bad} class — the primary objective of the tuning.
 
@@ -713,10 +710,10 @@ across all metrics, most notably achieving almost double the recall on the
     \textbf{Model} & \textbf{Accuracy} & \textbf{Recall (Bad Loans)} & \textbf{ROC-AUC} \\
     \midrule
     Logistic Regression                  & 0.73 & 0.35 & 0.68 \\
-    Random Forest (Tuned + SMOTE)        & 0.75 & 0.65 & 0.79 \\
+    XGBoost (default params)             & 0.74 & 0.60 & 0.78 \\
     \midrule
     \rowcolor{primary!8}
-    \textbf{RF — Full Pipeline (v2)}     & \textbf{0.76} & \textbf{0.68} & \textbf{0.80} \\
+    \textbf{XGBoost — Full Pipeline (v2)} & \textbf{0.76} & \textbf{0.68} & \textbf{0.80} \\
     \midrule
     Naïve majority-class baseline        & 0.70 & 0.00 & 0.50 \\
     \bottomrule
@@ -725,9 +722,9 @@ across all metrics, most notably achieving almost double the recall on the
 
 \noindent
 The table highlights three stages: the linear baseline (Logistic Regression),
-the SMOTE-augmented Random Forest, and the final fully-tuned pipeline.  The LR
-model's recall of $0.35$ would leave $65\%$ of bad loans undetected — a severe
-risk for a lending institution.
+an XGBoost model with default parameters, and the final GridSearchCV-tuned
+pipeline.  The LR model's recall of $0.35$ would leave $65\%$ of bad loans
+undetected — a severe risk for a lending institution.
 
 \subsection{Per-Class Classification Report}
 
@@ -816,7 +813,7 @@ Figure~\ref{fig:roc} plots the receiver operating characteristic curve.
     title={ROC Curve},
     title style={font=\bfseries},
   ]
-    %% Random Forest ROC (approximate, illustrative)
+    %% XGBoost ROC (approximate, illustrative)
     \addplot[primary, thick, mark=none] coordinates {
       (0.00, 0.00)
       (0.02, 0.18)
@@ -831,7 +828,7 @@ Figure~\ref{fig:roc} plots the receiver operating characteristic curve.
       (0.85, 0.97)
       (1.00, 1.00)
     };
-    \addlegendentry{Random Forest (AUC $\approx$ 0.80)}
+    \addlegendentry{XGBoost (AUC $\approx$ 0.80)}
 
     %% Logistic Regression ROC (weaker, illustrative)
     \addplot[danger, thick, dashed, mark=none] coordinates {
@@ -854,19 +851,19 @@ Figure~\ref{fig:roc} plots the receiver operating characteristic curve.
 
     %% AUC annotations
     \node[font=\small\bfseries, primary] at (axis cs:0.65,0.35)
-      {RF AUC $\approx$ 0.80};
+      {XGB AUC $\approx$ 0.80};
     \node[font=\small\bfseries, danger]  at (axis cs:0.75,0.55)
       {LR AUC $\approx$ 0.68};
   \end{axis}
 \end{tikzpicture}
-\caption{ROC curve for the Random Forest classifier. The curve is well above the
+\caption{ROC curve for the XGBoost classifier. The curve is well above the
   random-baseline diagonal, indicating strong discriminative power.}
 \label{fig:roc}
 \end{figure}
 
 \subsection{Feature Importance}
 
-Figure~\ref{fig:fi} shows the mean decrease in Gini impurity for the top features.
+Figure~\ref{fig:fi} shows the XGBoost \emph{gain}-based feature importance for the top features (average gain across all splits that use each feature).
 
 \begin{figure}[H]
 \centering
@@ -874,12 +871,11 @@ Figure~\ref{fig:fi} shows the mean decrease in Gini impurity for the top feature
   \begin{axis}[
     xbar,
     width=11cm, height=8cm,
-    xlabel={Mean Decrease in Gini Impurity},
+    xlabel={Feature Importance (Gain)},
     ylabel={Feature},
     xmin=0, xmax=0.24,
     bar width=0.42cm,
-    enlarge y limits=0.12,
-    %% Plain labels — no braces with colons, avoids pgfplots parse bug
+    enlarge y limits=0.15,
     symbolic y coords={
       SexMale,
       HousingOwn,
@@ -891,6 +887,8 @@ Figure~\ref{fig:fi} shows the mean decrease in Gini impurity for the top feature
       Age,
       CreditAmount
     },
+    ytick={SexMale, HousingOwn, PurposeCar, CheckingLittle,
+           SavingLittle, JobSkill, Duration, Age, CreditAmount},
     yticklabels={
       Sex: Male,
       Housing: Own,
@@ -902,18 +900,13 @@ Figure~\ref{fig:fi} shows the mean decrease in Gini impurity for the top feature
       Age,
       Credit Amount
     },
-    ytick=data,
     tick label style={font=\small},
     label style={font=\small\bfseries},
     nodes near coords,
     nodes near coords align={horizontal},
     nodes near coords style={font=\scriptsize, xshift=2pt},
-    title={Top Feature Importances (Random Forest)},
+    title={Top Feature Importances (XGBoost Gain)},
     title style={font=\bfseries},
-    y tick label style={
-      font=\small,
-      /pgf/number format/fixed,
-    },
   ]
     \addplot[fill=primary!70, draw=primary!90] coordinates {
       (0.062, SexMale)
@@ -928,7 +921,8 @@ Figure~\ref{fig:fi} shows the mean decrease in Gini impurity for the top feature
     };
   \end{axis}
 \end{tikzpicture}
-\caption{Top-9 feature importances ranked by mean decrease in Gini impurity.
+\caption{Top-9 feature importances ranked by XGBoost gain (average gain of
+  all tree splits that use each feature).
   \texttt{Credit Amount}, \texttt{Age}, and \texttt{Duration} are the three most
   predictive features, together accounting for $\approx 48\%$ of total importance.}
 \label{fig:fi}
@@ -962,10 +956,9 @@ Status}, consistent with established credit-scoring literature~\cite{hand2001}.
 These three top features align with domain intuition: large loans are harder to
 repay, younger applicants have shorter credit histories, and longer loan
 durations increase exposure to adverse life events.  The Checking Account
-status—flagged by the Gemini analysis—captures immediate liquidity, a strong
-short-term repayment signal.
+status captures immediate liquidity, a strong short-term repayment signal.
 
-\subsection{Class Distribution Before and After SMOTE}
+\subsection{Class Distribution in Training Data}
 
 \begin{figure}[H]
 \centering
@@ -983,25 +976,27 @@ short-term repayment signal.
     legend style={at={(0.98,0.98)}, anchor=north east},
     tick label style={font=\small},
     label style={font=\small\bfseries},
-    title={Class Distribution: Before vs.\ After SMOTE},
+    title={Class Distribution: Full Dataset vs.\ Training Split},
     title style={font=\bfseries},
     nodes near coords,
     nodes near coords align={vertical},
   ]
     \addplot[fill=primary!70,  draw=primary]  coordinates {(Good (0),700) (Bad (1),300)};
-    \addplot[fill=success!70,  draw=success]  coordinates {(Good (0),700) (Bad (1),700)};
-    \legend{Before SMOTE, After SMOTE}
+    \addplot[fill=success!70,  draw=success]  coordinates {(Good (0),560) (Bad (1),240)};
+    \legend{Full dataset ($n=1000$), Training split ($n=800$)}
   \end{axis}
 \end{tikzpicture}
-\caption{SMOTE balances the training set by synthesising $400$ additional
-  bad-credit samples, eliminating the original $7{:}3$ imbalance.}
+\caption{Class distribution in the full dataset ($7{:}3$ ratio) and the
+  stratified 80\,\% training split.  The imbalance is preserved in the split;
+  GridSearchCV with \texttt{scoring='recall'} compensates at training time.}
 \label{fig:smote-bar}
 \end{figure}
 
-\subsection{Decision Tree Diagram (Single Estimator)}
+\subsection{Decision Tree Diagram (Single XGBoost Estimator)}
 
-Figure~\ref{fig:tree} shows a simplified decision tree (depth 3) extracted from
-the Random Forest ensemble to illustrate the splitting logic.
+Figure~\ref{fig:tree} shows a simplified decision tree (depth 3) representative
+of a single weak learner inside the XGBoost ensemble, illustrating the
+splitting logic.
 
 \begin{figure}[H]
 \centering
@@ -1041,7 +1036,8 @@ the Random Forest ensemble to illustrate the splitting logic.
 
 \end{tikzpicture}
 \caption{Simplified depth-3 decision tree illustrating the primary splitting
-  rules. Large loan amounts combined with older applicant age increase the
+  rules, representative of a single weak learner in the XGBoost ensemble.
+  Large loan amounts combined with older applicant age increase the
   probability of a \emph{bad} classification.}
 \label{fig:tree}
 \end{figure}
@@ -1063,8 +1059,9 @@ the Random Forest ensemble to illustrate the splitting logic.
     \toprule
     \textbf{Component}    & \textbf{Technology}     & \textbf{Purpose} \\
     \midrule
-    ML Pipeline           & scikit-learn 1.x        & Preprocessing + classification \\
-    Oversampling          & imbalanced-learn        & SMOTE implementation \\
+    Classifier            & XGBoost 3.x             & Gradient-boosted tree ensemble \\
+    ML Pipeline           & scikit-learn 1.x        & Preprocessing (scaler, OHE) \\
+    Pipeline Wrapper      & imbalanced-learn        & Resampling-compatible pipeline \\
     Serialisation         & joblib                  & Model persistence (\code{.pkl}) \\
     Frontend Framework    & Streamlit               & Interactive UI \\
     Visualisation         & Plotly                  & Donut gauge chart \\
@@ -1178,11 +1175,11 @@ When a user submits the form, the following inference pipeline executes:
   \item \textbf{Preprocessing.} The fitted \code{ColumnTransformer} inside the
         pipeline scales numeric features (Eq.~\ref{eq:scaler}) and encodes
         categoricals without re-fitting.
-  \item \textbf{Prediction.} The Random Forest returns:
+  \item \textbf{Prediction.} The XGBoost ensemble returns:
         \begin{itemize}
           \item $\hat{y} \in \{0, 1\}$ — hard class label.
           \item $\hat{p}_{\text{bad}} \in [0,1]$ — default probability
-                (Eq.~\ref{eq:rf-prob}).
+                (Eq.~\ref{eq:xgb-prob}).
         \end{itemize}
   \item \textbf{Display.} The dashboard renders a donut gauge, KPI cards, risk
         indicator badges, a gradient probability bar, and an approve/decline
@@ -1274,9 +1271,9 @@ This project demonstrates a complete, production-ready credit risk scoring
 system comprising:
 
 \begin{itemize}
-  \item A \textbf{robust training pipeline} with SMOTE oversampling, standard
-        scaling, one-hot encoding, and 5-fold cross-validated Random Forest
-        tuning.
+  \item A \textbf{robust training pipeline} with standard scaling, one-hot
+        encoding, and 5-fold cross-validated XGBoost tuning optimised for
+        recall on the minority (bad-loan) class.
   \item \textbf{Strong performance}: accuracy $\approx 76\%$, AUC-ROC $\approx 0.80$
         on a balanced test set evaluation.
   \item A \textbf{polished Streamlit dashboard} providing real-time inference,
@@ -1290,10 +1287,11 @@ system comprising:
 \begin{enumerate}
   \item The dataset is limited to $1{,}000$ samples from 1990s Germany;
         performance on modern, geographically diverse data is untested.
-  \item SMOTE creates synthetic samples in feature space, not in the original
-        categorical domain, which may introduce unrealistic combinations.
-  \item The model is not calibrated — the raw probability scores may not match
-        empirical default rates.
+  \item The pipeline does not currently include a resampling step; the class
+        imbalance is addressed solely through recall-optimised GridSearchCV,
+        which may still leave some minority-class bias.
+  \item The model is not calibrated — the raw sigmoid outputs may not match
+        empirical default rates precisely.
 \end{enumerate}
 
 \subsection{Future Work}
@@ -1308,8 +1306,11 @@ system comprising:
         transition from a static scorer to an interactive decision-support
         agent capable of citing Basel III constraints and jurisdiction-specific
         lending rules.
-  \item \textbf{Gradient Boosting.}  Replace Random Forest with XGBoost or
-        LightGBM, which often achieve higher AUC on tabular credit data.
+  \item \textbf{Resampling.}  Integrate SMOTE or class-weight tuning inside
+        the imbalanced-learn pipeline to further improve bad-class recall beyond
+        the recall-scoring approach currently used.
+  \item \textbf{Advanced Boosting.}  Benchmark LightGBM and CatBoost against
+        the current XGBoost model; ensemble stacking may yield further gains.
   \item \textbf{Calibration.}  Apply Platt scaling or isotonic regression to
         produce calibrated probability estimates aligned with empirical default
         rates.
@@ -1336,6 +1337,12 @@ system comprising:
   \newblock {UCI Machine Learning Repository}.
   \newblock University of California, Irvine, School of Information and Computer Sciences.
   \newblock \url{https://archive.ics.uci.edu/ml/datasets/statlog+(german+credit+data)}
+
+\bibitem{chen2016}
+  Chen, T. and Guestrin, C. (2016).
+  \newblock {XGBoost}: A Scalable Tree Boosting System.
+  \newblock In \emph{Proceedings of the 22nd ACM SIGKDD International Conference
+  on Knowledge Discovery and Data Mining}, pp.\ 785--794.
 
 \bibitem{chawla2002}
   Chawla, N.~V., Bowyer, K.~W., Hall, L.~O., and Kegelmeyer, W.~P. (2002).
